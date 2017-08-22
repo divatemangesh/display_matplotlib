@@ -139,13 +139,14 @@ class DisplayImpl(virtualDevice.DisplayImpl):
         self._maskTransparency = {None : 0.7}
         self._interpretMaskBits = interpretMaskBits # interpret mask bits in mtv
         self._mtvOrigin = mtvOrigin
+        self._xy0 = (0, 0)
 
         #
         # Support self._scale()
         #
         self._normalize = None
         #
-        # Hack to support self._erase();  set in mtv
+        # Hack to support self._erase() and also reporting pixel/mask values;  set in mtv
         #
         self._image = None
 
@@ -189,6 +190,7 @@ class DisplayImpl(virtualDevice.DisplayImpl):
         self._width, self._height = image.getDimensions()
         self._xcen = 0.5*self._width
         self._ycen = 0.5*self._height
+        self._xy0 = image.getXY0()
         #
         # I hate to do this, but it's an easy way to make erase() work
         # (I don't know how to just erase the overlays)
@@ -198,8 +200,8 @@ class DisplayImpl(virtualDevice.DisplayImpl):
         self._wcs = wcs
         self._title = title
         #
-        def format_coord(x, y, origin=afwImage.PARENT, bbox=self._image.getBBox(afwImage.PARENT),
-                         x0=self._image.getX0(), y0=self._image.getY0()):
+        def format_coord(x, y, x0=self._xy0[0], y0=self._xy0[1],
+                         origin=afwImage.PARENT, bbox=self._image.getBBox(afwImage.PARENT)):
 
             fmt = '(%1.2f, %1.2f)' 
             if self._mtvOrigin == afwImage.PARENT:
@@ -351,20 +353,21 @@ class DisplayImpl(virtualDevice.DisplayImpl):
             ctype = afwDisplay.GREEN
 
         axis = self._figure.gca()
+        x0, y0 = self._xy0
         
         if isinstance(symb, afwGeom.ellipses.BaseCore):
             from matplotlib.patches import Ellipse
 
-            axis.add_artist(Ellipse((c, r), xradius=symb.getA(), yradius=symb.getB(),
+            axis.add_artist(Ellipse((c + x0, r + y0), xradius=symb.getA(), yradius=symb.getB(),
                                           rot_deg=math.degrees(symb.getTheta()), color=ctype))
         elif symb == 'o':
             from matplotlib.patches import CirclePolygon as Circle
 
-            axis.add_artist(Circle((c, r), radius=size, color=ctype, fill=False))
+            axis.add_artist(Circle((c + x0, r + y0), radius=size, color=ctype, fill=False))
         else:
             from matplotlib.lines import Line2D
 
-            for ds9Cmd in ds9Regions.dot(symb, c, r, size, fontFamily="helvetica", textAngle=None):
+            for ds9Cmd in ds9Regions.dot(symb, c + x0, r + y0, size, fontFamily="helvetica", textAngle=None):
                 tmp = ds9Cmd.split('#')
                 cmd = tmp.pop(0).split()
                 comment = tmp.pop(0) if tmp else ""
@@ -383,7 +386,8 @@ class DisplayImpl(virtualDevice.DisplayImpl):
                     axis.add_line(Line2D(x, y, color=ctype))
                 elif cmd == "text":
                     x, y = np.array(args[0:2]).astype(float) - 1.0
-                    axis.text(x, y, symb, color=ctype, horizontalalignment='center')
+                    axis.text(x, y, symb, color=ctype,
+                              horizontalalignment='center', verticalalignment='center')
                 else:
                     raise RuntimeError(ds9Cmd)
 
@@ -397,8 +401,8 @@ class DisplayImpl(virtualDevice.DisplayImpl):
             ctype = afwDisplay.GREEN
 
         points = np.array(points)
-        x = points[:, 0]
-        y = points[:, 1]
+        x = points[:, 0] + self._xy0[0]
+        y = points[:, 1] + self._xy0[1]
 
         self._figure.gca().add_line(Line2D(x, y, color=ctype))
     #
@@ -435,8 +439,9 @@ class DisplayImpl(virtualDevice.DisplayImpl):
     def _pan(self, colc, rowc):
         """Pan to (colc, rowc)"""
 
-        self._xcen = colc
-        self._ycen = rowc
+        x0, y0 = self._xy0
+        self._xcen = colc + x0
+        self._ycen = rowc + y0
 
         self._zoom(self._zoomfac)        
 
