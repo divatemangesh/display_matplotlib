@@ -42,6 +42,7 @@ import lsst.afw.display.rgb as afwRgb
 import lsst.afw.display.interface as interface
 import lsst.afw.display.virtualDevice as virtualDevice
 import lsst.afw.display.ds9Regions as ds9Regions
+import lsst.afw.image as afwImage
 
 import lsst.afw.geom as afwGeom
 
@@ -122,16 +123,23 @@ def getMpFigure(fig=None, clear=True):
 class DisplayImpl(virtualDevice.DisplayImpl):
     server = None
 
-    def __init__(self, display, verbose=False, open=False,
+    def __init__(self, display, verbose=False, interpretMaskBits=True, mtvOrigin=afwImage.PARENT,
                  *args, **kwargs):
         """
         Initialise a matplotlib display
+
+        @param interpretMaskBits    Interpret the mask value under the cursor
+        @param mtvOrigin            Display pixel coordinates with LOCAL origin
+                                    (bottom left == 0,0 not XY0)
         """
         virtualDevice.DisplayImpl.__init__(self, display, verbose)
 
         self._figure = getMpFigure(fig=display.frame + 1, clear=True)
         self._display = display
         self._maskTransparency = {None : 0.7}
+        self._interpretMaskBits = interpretMaskBits # interpret mask bits in mtv
+        self._mtvOrigin = mtvOrigin
+
         #
         # Support self._scale()
         #
@@ -169,11 +177,13 @@ class DisplayImpl(virtualDevice.DisplayImpl):
         self._figure.clf()              # calling erase() calls _mtv
 
         self._i_mtv(image, wcs, title, False)
+        ax = self._figure.gca()
 
         if mask:
             self._i_mtv(mask, wcs, title, True)
+            
         if title:
-            self._figure.gca().set_title(title)
+            ax.set_title(title)
         
         self._zoomfac = 1.0
         self._width, self._height = image.getDimensions()
@@ -187,6 +197,38 @@ class DisplayImpl(virtualDevice.DisplayImpl):
         self._mask = mask
         self._wcs = wcs
         self._title = title
+        #
+        def format_coord(x, y, origin=afwImage.PARENT, bbox=self._image.getBBox(afwImage.PARENT),
+                         x0=self._image.getX0(), y0=self._image.getY0()):
+
+            fmt = '(%1.2f, %1.2f)' 
+            if self._mtvOrigin == afwImage.PARENT:
+                msg = fmt % (x, y)
+            else:
+                msg = (fmt + "L") % (x - x0, y - y0)
+
+            col = int(x + 0.5)
+            row = int(y + 0.5)
+            if bbox.contains(afwGeom.PointI(col, row)):
+                col -= x0
+                row -= y0
+
+                msg += ' %1.3f' % (self._image.get(col, row))
+                if self._mask:
+                    val = self._mask.get(col, row)
+                    if self._interpretMaskBits:
+                        msg += " [%s]" % self._mask.interpret(val)
+                    else:
+                        msg += " 0x%x" % val
+
+            return msg
+
+        ax.format_coord = format_coord
+        # Stop images from reporting their value as we've already printed it nicely
+        from matplotlib.image import AxesImage
+        for a in ax.mouseover_set:
+            if isinstance(a, AxesImage):
+                a.get_cursor_data = lambda ev: None # disabled
 
         self._figure.canvas.draw_idle()
 
@@ -243,8 +285,12 @@ class DisplayImpl(virtualDevice.DisplayImpl):
             cmap = pyplot.cm.gray
             norm = self._normalize
 
-        im = self._figure.gca().imshow(dataArr, origin='lower', interpolation='nearest',
-                                       cmap=cmap, norm=norm)
+        ax = self._figure.gca()
+        bbox = data.getBBox()
+        ax.imshow(dataArr, origin='lower', interpolation='nearest',
+                  extent=(bbox.getBeginX() - 0.5, bbox.getEndX() - 0.5,
+                          bbox.getBeginY() - 0.5, bbox.getEndY() - 0.5),
+                  cmap=cmap, norm=norm)
 
         if False:
             if evData:
